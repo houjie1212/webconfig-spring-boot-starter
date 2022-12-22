@@ -3,6 +3,7 @@ package pers.lurker.webconfig.web;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.*;
+import com.fasterxml.jackson.databind.deser.std.DateDeserializers;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import org.apache.commons.text.StringEscapeUtils;
@@ -20,16 +21,24 @@ import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
+import org.springframework.web.method.support.HandlerMethodArgumentResolver;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import pers.lurker.webconfig.enumeration.BaseEnum;
 import pers.lurker.webconfig.filter.jsonparam.JsonParameterFilter;
 import pers.lurker.webconfig.filter.xss.XssFilterProperties;
 import pers.lurker.webconfig.filter.xss.XssRequestFilter;
+import pers.lurker.webconfig.serializer.RequestTZDateDeSerializer;
+import pers.lurker.webconfig.serializer.RequestTZDateSerializer;
+import pers.lurker.webconfig.web.interceptor.TimeZoneInterceptor;
+import pers.lurker.webconfig.web.singleJsonParamResolver.SingleJsonParamResolver;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 
 @Configuration("commonWebMvcConfiguration")
@@ -41,6 +50,8 @@ public class WebConfiguration implements WebMvcConfigurer {
 
     @Value("${spring.jackson.date-format:yyyy-MM-dd HH:mm:ss}")
     private String dateFormat;
+    @Value("${global.response.advice.enabled:true}")
+    private boolean globalResponseAdvice;
 
     public WebConfiguration(XssFilterProperties xssFilterProperties) {
         this.xssFilterProperties = xssFilterProperties;
@@ -86,11 +97,22 @@ public class WebConfiguration implements WebMvcConfigurer {
 
         MappingJackson2HttpMessageConverter converter = new MappingJackson2HttpMessageConverter();
         ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         SimpleModule simpleModule = new SimpleModule();
         simpleModule.addSerializer(Long.class, ToStringSerializer.instance);
         simpleModule.addSerializer(Long.TYPE, ToStringSerializer.instance);
         simpleModule.addSerializer(BigDecimal.class, ToStringSerializer.instance);
         simpleModule.addSerializer(BaseEnum.class, new EnumSerializer(BaseEnum.class));
+
+        DateFormat simpleDateFormat = new SimpleDateFormat(dateFormat);
+        //時間序列化
+        RequestTZDateSerializer dateSerializer = new RequestTZDateSerializer(Boolean.FALSE,simpleDateFormat);
+        simpleModule.addSerializer(Date.class,dateSerializer);
+        //時間反序列化
+        DateDeserializers.DateDeserializer base =  DateDeserializers.DateDeserializer.instance;
+        simpleModule.addDeserializer(Date.class,new RequestTZDateDeSerializer(base,simpleDateFormat,dateFormat));
+        simpleModule.addDeserializer(Date.class,new DateDeserializer(new DateConverter()));
+
         if (StringUtils.hasText(dateFormat)) {
             objectMapper.setDateFormat(new SimpleDateFormat(dateFormat));
         }
@@ -105,16 +127,31 @@ public class WebConfiguration implements WebMvcConfigurer {
         }
         objectMapper.registerModule(simpleModule);
         converter.setObjectMapper(objectMapper);
+        if (!globalResponseAdvice) {
+            converters.add(converter);
+            return;
+        }
 
         ArrayList<MediaType> supportMediaTypes = new ArrayList<>(converter.getSupportedMediaTypes());
-        supportMediaTypes.add(MediaType.ALL);
+        supportMediaTypes.add(MediaType.TEXT_HTML);
         converter.setSupportedMediaTypes(supportMediaTypes);
         converters.add(0, converter);
+    }
+
+    @Override
+    public void addInterceptors(InterceptorRegistry registry){
+        registry.addInterceptor(new TimeZoneInterceptor());
     }
 
     @Override
     public void addFormatters(FormatterRegistry registry) {
         registry.addConverter(new DateConverter());
         registry.addConverterFactory(new EnumConverterFactory());
+    }
+
+    @Override
+    public void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {
+        resolvers.add(new SingleJsonParamResolver());
+        WebMvcConfigurer.super.addArgumentResolvers(resolvers);
     }
 }

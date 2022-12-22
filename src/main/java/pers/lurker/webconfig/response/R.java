@@ -89,6 +89,11 @@ public class R<T> {
         return data;
     }
 
+    public R<T> setData(T data) {
+        this.data = data;
+        return this;
+    }
+
     @Override
     public String toString() {
         return new StringJoiner(", ", R.class.getSimpleName() + "[", "]")

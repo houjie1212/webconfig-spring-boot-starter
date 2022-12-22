@@ -1,5 +1,6 @@
 package pers.lurker.webconfig.filter.jsonparam;
 
+import org.springframework.http.MediaType;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import javax.servlet.FilterChain;
@@ -12,7 +13,8 @@ public class JsonParameterFilter extends OncePerRequestFilter {
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
-        if ("application/json".equals(request.getContentType())) {
+        if (request.getContentType() != null
+                && request.getContentType().contains(MediaType.APPLICATION_JSON_VALUE)) {
             filterChain.doFilter(new JsonParameterHttpServletRequestWrapper(request), response);
             JsonParameterRequestHolder.removeJsonParameter();
         } else {

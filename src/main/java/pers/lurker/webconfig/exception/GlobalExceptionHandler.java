@@ -2,9 +2,15 @@ package pers.lurker.webconfig.exception;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.BindException;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -16,6 +22,14 @@ import pers.lurker.webconfig.filter.jsonparam.JsonParameterRequestHolder;
 import pers.lurker.webconfig.response.R;
 import pers.lurker.webconfig.response.ReturnCodeEnum;
 import pers.lurker.webconfig.util.JsonUtil;
+
+import javax.validation.ConstraintViolation;
+import javax.validation.ConstraintViolationException;
+import javax.validation.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
@@ -30,11 +44,56 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return super.handleExceptionInternal(ex, result, headers, status, request);
     }
 
+    @Override
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(
+            MethodArgumentNotValidException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+        printLog(request, ex, false);
+        final List<FieldError> fieldErrors = ex.getBindingResult().getFieldErrors();
+        final Map<String, String> errorFieldMessages = fieldErrors.stream().collect(
+                Collectors.toMap(FieldError::getField, DefaultMessageSourceResolvable::getDefaultMessage));
+        R<?> result =
+                R.builder().buildFail(ReturnCodeEnum.FAILED.getCode(), ReturnCodeEnum.FAILED.getMsg())
+                .setData(errorFieldMessages);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(result);
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(
+            HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+        printLog(request, ex, false);
+        R<?> result = R.builder().buildFail(ReturnCodeEnum.FAILED.getCode(), ReturnCodeEnum.FAILED.getMsg());
+        return super.handleExceptionInternal(ex, result, headers, status, request);
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleBindException(
+            BindException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+        printLog(request, ex, false);
+        List<FieldError> fieldErrors = ex.getFieldErrors();
+        final Map<String, String> errorFieldMessages = fieldErrors.stream().collect(
+                Collectors.toMap(FieldError::getField, DefaultMessageSourceResolvable::getDefaultMessage));
+        R<?> result = R.builder().buildFail(ReturnCodeEnum.FAILED.getCode(), ReturnCodeEnum.FAILED.getMsg())
+                .setData(errorFieldMessages);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(result);
+    }
+
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<R<?>> methodArgumentTypeMismatchExceptionHandler(
             MethodArgumentTypeMismatchException e, WebRequest request) {
         printLog(request, e, false);
         R<?> result = R.builder().buildFail(ReturnCodeEnum.FAILED.getCode(), e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(result);
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<R<?>> handleConstraintViolationException(
+            ConstraintViolationException e, WebRequest request) {
+        printLog(request, e, false);
+        Set<ConstraintViolation<?>> constraintViolations = e.getConstraintViolations();
+        Map<Path, String> errorFieldMessages = constraintViolations.stream().collect(
+                Collectors.toMap(ConstraintViolation::getPropertyPath, ConstraintViolation::getMessage));
+        R<?> result = R.builder().buildFail(ReturnCodeEnum.FAILED.getCode(), ReturnCodeEnum.FAILED.getMsg())
+                .setData(errorFieldMessages);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(result);
     }
 
@@ -69,7 +128,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         if ("GET".equalsIgnoreCase(requestMethod) || "DELETE".equalsIgnoreCase(requestMethod)) {
             requestParameter = JsonUtil.obj2String(servletWebRequest.getParameterMap());
         } else { // POST
-            if ("application/json".equals(contentType)) {
+            if (contentType != null && contentType.contains(MediaType.APPLICATION_JSON_VALUE)) {
                 byte[] bytes = JsonParameterRequestHolder.getJsonParameter();
                 Object o = JsonUtil.bytes2Obj(bytes, Object.class);
                 requestParameter = JsonUtil.obj2String(o);
@@ -79,10 +138,10 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         }
 
         if (printStrackTrace) {
-            log.error(String.format("request error %s %s contentType: %s params: %s",
+            log.error(String.format("request error %s %s contentType: %s \nparams: %s",
                     requestMethod, requestURL, contentType, requestParameter), t);
         } else {
-            log.error(String.format("request error %s %s contentType: %s params: %s, reason: %s",
+            log.error(String.format("request error %s %s contentType: %s \nparams: %s, \nreason: %s",
                     requestMethod, requestURL, contentType, requestParameter, t.getMessage()));
         }
 
